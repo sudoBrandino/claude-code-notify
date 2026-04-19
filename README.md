@@ -23,9 +23,14 @@ The built-in Claude Code notification experience fires regardless of whether you
 ```bash
 brew tap sudoBrandino/claude-code-notify
 brew install claude-code-notify
+claude-code-notify --install-hooks
 ```
 
-Then merge the hook entries from [`settings.example.json`](./settings.example.json) into `~/.claude/settings.json` — `brew` will print the exact path in the caveats (typically `/opt/homebrew/bin/claude-code-notify`).
+The last command merges the hook entries into `~/.claude/settings.json` via `jq` — idempotent and preserves any existing hooks. To undo:
+
+```bash
+claude-code-notify --uninstall-hooks
+```
 
 ### Manual
 

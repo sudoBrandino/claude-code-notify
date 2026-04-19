@@ -94,6 +94,57 @@ assert "Empty payload is suppressed" \
   '' \
   ''
 
+# --- subcommand tests -------------------------------------------------------
+
+run_install_hooks_test() {
+  command -v jq >/dev/null 2>&1 || {
+    printf '  - skipped install-hooks tests (jq not installed)\n'
+    return 0
+  }
+  local th
+  th=$(mktemp -d)
+  mkdir -p "$th/.claude"
+  printf '{"hooks":{"PreToolUse":[{"matcher":"Edit","hooks":[{"type":"command","command":"existing"}]}]}}\n' \
+    > "$th/.claude/settings.json"
+
+  HOME="$th" "$HOOK" --install-hooks >/dev/null
+  if jq -e '.hooks.Notification[0].hooks[0].command and .hooks.Stop[0].hooks[0].command and .hooks.PreToolUse[0].matcher == "Edit"' \
+       "$th/.claude/settings.json" >/dev/null; then
+    printf '  ✓ --install-hooks adds Notification+Stop and preserves existing hooks\n'
+    PASS=$((PASS + 1))
+  else
+    printf '  ✗ --install-hooks produced unexpected settings.json\n'
+    FAIL=$((FAIL + 1))
+    FAILED_NAMES+=("install-hooks preserves")
+  fi
+
+  local out
+  out=$(HOME="$th" "$HOOK" --install-hooks)
+  if [[ "$out" == "already wired up:"* ]]; then
+    printf '  ✓ --install-hooks is idempotent\n'
+    PASS=$((PASS + 1))
+  else
+    printf '  ✗ --install-hooks not idempotent (got: %s)\n' "$out"
+    FAIL=$((FAIL + 1))
+    FAILED_NAMES+=("install-hooks idempotent")
+  fi
+
+  HOME="$th" "$HOOK" --uninstall-hooks >/dev/null
+  if jq -e '.hooks.Notification == null and .hooks.Stop == null and .hooks.PreToolUse[0].matcher == "Edit"' \
+       "$th/.claude/settings.json" >/dev/null; then
+    printf '  ✓ --uninstall-hooks removes our entries and preserves others\n'
+    PASS=$((PASS + 1))
+  else
+    printf '  ✗ --uninstall-hooks left unexpected state\n'
+    FAIL=$((FAIL + 1))
+    FAILED_NAMES+=("uninstall-hooks")
+  fi
+
+  rm -rf "$th"
+}
+
+run_install_hooks_test
+
 echo ""
 echo "$PASS passed, $FAIL failed"
 if [ "$FAIL" -gt 0 ]; then

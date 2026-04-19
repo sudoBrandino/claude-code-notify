@@ -7,6 +7,11 @@
 #
 # Platforms: macOS (native, no deps) and Linux (requires jq + libnotify,
 # optionally xdotool for frontmost detection on X11).
+#
+# Subcommands:
+#   --install-hooks    Wire this binary into ~/.claude/settings.json (needs jq)
+#   --uninstall-hooks  Remove any hook entries pointing at this binary
+#   --help             Print usage
 
 # --- Configuration ----------------------------------------------------------
 
@@ -28,6 +33,105 @@ DRY_RUN="${CLAUDE_NOTIFY_DRY_RUN:-0}"
 # ----------------------------------------------------------------------------
 
 OS=$(uname -s)
+
+# --- Subcommands ------------------------------------------------------------
+
+resolve_self_path() {
+  # Prefer the name on $PATH (stable across brew upgrades via symlink).
+  local name="${0##*/}" via_path
+  via_path=$(command -v "$name" 2>/dev/null || true)
+  if [ -n "$via_path" ] && [ "$via_path" != "$0" ]; then
+    printf '%s' "$via_path"
+    return
+  fi
+  # Fall back to the absolute path of whatever file was invoked.
+  case "$0" in
+    /*) printf '%s' "$0" ;;
+    *)  printf '%s/%s' "$(cd "$(dirname "$0")" && pwd)" "$(basename "$0")" ;;
+  esac
+}
+
+print_help() {
+  cat <<'EOF'
+Usage: claude-code-notify [options]
+
+With no options, reads a Claude Code hook JSON event on stdin and posts a
+native desktop notification (unless the configured terminal app is frontmost).
+
+Options:
+  --install-hooks      Add this binary to ~/.claude/settings.json for the
+                       Notification and Stop events. Idempotent; requires jq.
+  --uninstall-hooks    Remove any hook entries that point at this binary.
+  --help, -h           Print this help.
+
+Environment:
+  CLAUDE_NOTIFY_SKIP_IF_FRONTMOST  Terminal app name to stay quiet for (default: Ghostty)
+  CLAUDE_NOTIFY_BUNDLE             Optional .app wrapper for a custom icon (macOS)
+  CLAUDE_NOTIFY_DRY_RUN=1          Print notification fields instead of posting
+EOF
+}
+
+install_hooks() {
+  command -v jq >/dev/null 2>&1 || {
+    echo "error: jq is required for --install-hooks (install with: brew install jq)" >&2
+    return 1
+  }
+  local settings="$HOME/.claude/settings.json"
+  local cmd
+  cmd=$(resolve_self_path)
+  mkdir -p "$HOME/.claude"
+  [ -f "$settings" ] || printf '{}\n' > "$settings"
+
+  if jq -e --arg cmd "$cmd" '
+        [(.hooks.Notification // [])[].hooks[]?.command,
+         (.hooks.Stop // [])[].hooks[]?.command]
+        | any(. == $cmd)
+      ' "$settings" >/dev/null; then
+    echo "already wired up: $cmd"
+    return 0
+  fi
+
+  local tmp
+  tmp=$(mktemp)
+  jq --arg cmd "$cmd" '
+    .hooks = (.hooks // {})
+    | .hooks.Notification = ((.hooks.Notification // []) +
+        [{"hooks":[{"type":"command","command":$cmd,"timeout":3}]}])
+    | .hooks.Stop = ((.hooks.Stop // []) +
+        [{"hooks":[{"type":"command","command":$cmd,"timeout":3}]}])
+  ' "$settings" > "$tmp" && mv "$tmp" "$settings"
+  echo "wired up: $cmd"
+  echo "  in: $settings"
+}
+
+uninstall_hooks() {
+  command -v jq >/dev/null 2>&1 || {
+    echo "error: jq is required for --uninstall-hooks" >&2
+    return 1
+  }
+  local settings="$HOME/.claude/settings.json"
+  [ -f "$settings" ] || { echo "nothing to remove: $settings not found"; return 0; }
+  local cmd
+  cmd=$(resolve_self_path)
+
+  local tmp
+  tmp=$(mktemp)
+  jq --arg cmd "$cmd" '
+    (.hooks.Notification? |= (. // [] |
+        map(select((.hooks // []) | map(.command) | index($cmd) | not))))
+    | (.hooks.Stop? |= (. // [] |
+        map(select((.hooks // []) | map(.command) | index($cmd) | not))))
+    | if (.hooks.Notification // [] | length) == 0 then del(.hooks.Notification) else . end
+    | if (.hooks.Stop // [] | length) == 0 then del(.hooks.Stop) else . end
+  ' "$settings" > "$tmp" && mv "$tmp" "$settings"
+  echo "removed any hook entries for: $cmd"
+}
+
+case "${1:-}" in
+  --install-hooks)   install_hooks;   exit $? ;;
+  --uninstall-hooks) uninstall_hooks; exit $? ;;
+  --help|-h)         print_help;      exit 0  ;;
+esac
 
 # --- Frontmost-app detection (best-effort; fail-open means "notify anyway") -
 
