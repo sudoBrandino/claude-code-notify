@@ -14,7 +14,7 @@
 #   --version          Print version
 #   --help             Print usage
 
-VERSION="0.3.0"
+VERSION="0.3.1"
 
 # --- Configuration ----------------------------------------------------------
 
@@ -95,17 +95,25 @@ install_hooks() {
     return 0
   fi
 
-  local tmp
+  local backup tmp
+  backup="${settings}.bak.$(date +%s)"
+  cp "$settings" "$backup"
   tmp=$(mktemp)
-  jq --arg cmd "$cmd" '
+  if ! jq --arg cmd "$cmd" '
     .hooks = (.hooks // {})
     | .hooks.Notification = ((.hooks.Notification // []) +
         [{"hooks":[{"type":"command","command":$cmd,"timeout":3}]}])
     | .hooks.Stop = ((.hooks.Stop // []) +
         [{"hooks":[{"type":"command","command":$cmd,"timeout":3}]}])
-  ' "$settings" > "$tmp" && mv "$tmp" "$settings"
+  ' "$settings" > "$tmp"; then
+    rm -f "$tmp"
+    echo "error: jq filter failed; settings.json unchanged (backup at $backup)" >&2
+    return 1
+  fi
+  mv "$tmp" "$settings"
   echo "wired up: $cmd"
-  echo "  in: $settings"
+  echo "  in:     $settings"
+  echo "  backup: $backup"
 }
 
 uninstall_hooks() {
@@ -118,17 +126,25 @@ uninstall_hooks() {
   local cmd
   cmd=$(resolve_self_path)
 
-  local tmp
+  local backup tmp
+  backup="${settings}.bak.$(date +%s)"
+  cp "$settings" "$backup"
   tmp=$(mktemp)
-  jq --arg cmd "$cmd" '
+  if ! jq --arg cmd "$cmd" '
     (.hooks.Notification? |= (. // [] |
         map(select((.hooks // []) | map(.command) | index($cmd) | not))))
     | (.hooks.Stop? |= (. // [] |
         map(select((.hooks // []) | map(.command) | index($cmd) | not))))
     | if (.hooks.Notification // [] | length) == 0 then del(.hooks.Notification) else . end
     | if (.hooks.Stop // [] | length) == 0 then del(.hooks.Stop) else . end
-  ' "$settings" > "$tmp" && mv "$tmp" "$settings"
-  echo "removed any hook entries for: $cmd"
+  ' "$settings" > "$tmp"; then
+    rm -f "$tmp"
+    echo "error: jq filter failed; settings.json unchanged (backup at $backup)" >&2
+    return 1
+  fi
+  mv "$tmp" "$settings"
+  echo "removed hook entries for: $cmd"
+  echo "  backup: $backup"
 }
 
 case "${1:-}" in
