@@ -48,6 +48,40 @@ CLAUDE_NOTIFY_SKIP_IF_FRONTMOST=iTerm2 ~/.claude/hooks/notify.sh
 CLAUDE_NOTIFY_SKIP_IF_FRONTMOST= ~/.claude/hooks/notify.sh
 ```
 
+## Optional: custom icon + click-to-focus bundle
+
+By default the hook uses `osascript` to post notifications, which works fine but shows the generic Script Editor icon and does nothing useful when clicked.
+
+For a nicer experience, build the included wrapper `.app` bundle:
+
+```bash
+git clone https://github.com/sudoBrandino/claude-code-notify.git
+cd claude-code-notify
+./bundle/build.sh
+```
+
+This produces `~/.claude/assets/Claude.app` — a minimal [`LSUIElement`](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/LaunchServicesKeys.html#//apple_ref/doc/uid/TP40009250-SW15) app (no Dock icon, no menu bar) whose sole job is to post notifications with its bundle's icon. `notify.sh` picks it up automatically.
+
+Clicking the notification activates your terminal (default: Ghostty) instead of just re-posting — set `CLAUDE_NOTIFY_CLICK_TARGET` and `CLAUDE_NOTIFY_CLICK_BUNDLE_ID` before building to point elsewhere.
+
+### Custom icon
+
+Drop an `AppIcon.icns` into the `bundle/` directory before running `build.sh`. Convert a PNG with:
+
+```bash
+mkdir icon.iconset
+sips -z 512 512 my-icon.png --out icon.iconset/icon_512x512.png
+# (repeat for other required sizes)
+iconutil -c icns icon.iconset -o bundle/AppIcon.icns
+```
+
+If no icon is present, the notification uses the default Swift app icon.
+
+### Requirements for the bundle
+
+- Xcode Command Line Tools (`xcode-select --install`) for `swiftc`
+- macOS 11+
+
 ## How the frontmost check works
 
 ```bash
