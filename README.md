@@ -1,9 +1,11 @@
 # claude-code-notify
 
-A small, dependency-free macOS notification hook for [Claude Code](https://claude.com/claude-code). Fires a native notification when Claude finishes a turn or needs attention — and **stays silent when your terminal is already frontmost**, because you don't need a popup for something you're staring at.
+[![CI](https://github.com/sudoBrandino/claude-code-notify/actions/workflows/ci.yml/badge.svg)](https://github.com/sudoBrandino/claude-code-notify/actions/workflows/ci.yml)
 
-- Pure shell (~70 lines), no Node or `jq` required
-- Uses macOS built-ins: `lsappinfo`, `plutil`, `osascript`, `stat`
+A small notification hook for [Claude Code](https://claude.com/claude-code). Fires a native desktop notification when Claude finishes a turn or needs attention — and **stays silent when your terminal is already frontmost**, because you don't need a popup for something you're staring at.
+
+- Pure shell, runs on **macOS** (no deps) and **Linux** (needs `jq` and `libnotify`)
+- macOS uses built-ins: `lsappinfo`, `plutil`, `osascript`, `stat`
 - ~10–20ms when skipping, ~30–40ms when notifying
 - ~3.5 MB peak RSS per invocation
 
@@ -104,11 +106,30 @@ lsappinfo info -only name "$asn"             # "LSDisplayName"="Ghostty"
 
 Messages are collapsed to single-line and truncated to 140 characters.
 
-## Requirements
+## Platform notes
 
-- macOS 12+ (for `plutil -extract` JSON support)
-- Claude Code configured with Notification + Stop hooks
-- No other dependencies
+**macOS 12+** — zero dependencies. Uses built-in `plutil -extract`, `lsappinfo`, `osascript`, `stat`.
+
+**Linux** — needs `jq` for JSON parsing and `libnotify` (`notify-send`) for notifications. Optional `xdotool` + `xprop` for frontmost-app detection on X11. On Wayland, frontmost detection fails open (you'll get notifications regardless of which app is focused), since there's no portable introspection API.
+
+```bash
+# Debian/Ubuntu
+sudo apt install jq libnotify-bin xdotool x11-utils
+
+# Arch
+sudo pacman -S jq libnotify xdotool xorg-xprop
+
+# Fedora
+sudo dnf install jq libnotify xdotool xorg-x11-utils
+```
+
+## Tests
+
+```bash
+tests/run.sh
+```
+
+Pipes fixture JSON through `notify.sh` in dry-run mode (`CLAUDE_NOTIFY_DRY_RUN=1`) and asserts on the printed output. Runs on every push via GitHub Actions (macOS + Ubuntu, plus `shellcheck`).
 
 ## License
 
