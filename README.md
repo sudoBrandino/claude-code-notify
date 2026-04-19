@@ -18,18 +18,25 @@ The built-in Claude Code notification experience fires regardless of whether you
 
 ## Install
 
+### Homebrew (recommended)
+
 ```bash
-# 1. Drop the script somewhere persistent
+brew tap sudoBrandino/claude-code-notify
+brew install claude-code-notify
+```
+
+Then merge the hook entries from [`settings.example.json`](./settings.example.json) into `~/.claude/settings.json` — `brew` will print the exact path in the caveats (typically `/opt/homebrew/bin/claude-code-notify`).
+
+### Manual
+
+```bash
 mkdir -p ~/.claude/hooks
 curl -o ~/.claude/hooks/notify.sh \
   https://raw.githubusercontent.com/sudoBrandino/claude-code-notify/main/notify.sh
 chmod +x ~/.claude/hooks/notify.sh
-
-# 2. Wire it into your Claude Code settings
-#    (edit ~/.claude/settings.json — see settings.example.json)
 ```
 
-Merge the hook entries from [`settings.example.json`](./settings.example.json) into your own `~/.claude/settings.json`.
+Then merge the hook entries from [`settings.example.json`](./settings.example.json) into `~/.claude/settings.json`.
 
 ## Configuration
 
