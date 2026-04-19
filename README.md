@@ -67,17 +67,17 @@ export CLAUDE_NOTIFY_CLICK_BUNDLE_ID=com.googlecode.iterm2
 
 ## Optional: custom icon + click-to-focus (macOS)
 
-By default notifications use the generic Script Editor icon and clicking them does nothing useful. For a nicer experience, build the included wrapper `.app` bundle:
+By default notifications are posted via bare `osascript`, which means they're owned by Script Editor — you get its icon, and clicking the notification opens Script Editor. For a nicer experience, build the included wrapper `.app` bundle:
 
 ```bash
-# Clone the repo (the bundle source isn't in the brew prefix by default)
-git clone https://github.com/sudoBrandino/claude-code-notify.git
-cd claude-code-notify
+# Homebrew users — the bundle source ships in the formula's share dir
+$(brew --prefix)/share/claude-code-notify/bundle/build.sh
 
-# Drop your own AppIcon.icns into bundle/ here for a custom icon — optional
-
+# Manual install — clone the repo and run
 ./bundle/build.sh
 ```
+
+Drop your own `AppIcon.icns` alongside `build.sh` **before** running it for a custom icon.
 
 This produces `~/.claude/assets/Claude.app` — a minimal [`LSUIElement`](https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/LaunchServicesKeys.html#//apple_ref/doc/uid/TP40009250-SW15) app (no Dock icon, no menu bar) whose only job is to post notifications under its bundle identity. `claude-code-notify` auto-detects and uses it.
 
@@ -125,7 +125,7 @@ Message bodies are collapsed to single-line and truncated to 140 characters.
 
 ## Platform notes
 
-**macOS 12+** — needs `jq` (for the subcommands). Everything else is built-in: `plutil`, `lsappinfo`, `osascript`, `stat`.
+**macOS 12+** — needs `jq` for JSON parsing (both the hook path and the subcommands). Everything else is built-in: `lsappinfo`, `osascript`, `stat`. Homebrew pulls `jq` in automatically.
 
 **Linux** — needs `jq` + `libnotify` (`notify-send`). Optional `xdotool` + `xprop` for X11 frontmost detection. On Wayland, frontmost detection fails open (no portable introspection API yet), so you'll get notifications regardless of which window is focused.
 

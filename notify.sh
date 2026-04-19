@@ -11,7 +11,10 @@
 # Subcommands:
 #   --install-hooks    Wire this binary into ~/.claude/settings.json (needs jq)
 #   --uninstall-hooks  Remove any hook entries pointing at this binary
+#   --version          Print version
 #   --help             Print usage
+
+VERSION="0.3.0"
 
 # --- Configuration ----------------------------------------------------------
 
@@ -62,6 +65,7 @@ Options:
   --install-hooks      Add this binary to ~/.claude/settings.json for the
                        Notification and Stop events. Idempotent; requires jq.
   --uninstall-hooks    Remove any hook entries that point at this binary.
+  --version, -v        Print version.
   --help, -h           Print this help.
 
 Environment:
@@ -128,9 +132,10 @@ uninstall_hooks() {
 }
 
 case "${1:-}" in
-  --install-hooks)   install_hooks;   exit $? ;;
-  --uninstall-hooks) uninstall_hooks; exit $? ;;
-  --help|-h)         print_help;      exit 0  ;;
+  --install-hooks)   install_hooks;                      exit $? ;;
+  --uninstall-hooks) uninstall_hooks;                    exit $? ;;
+  --version|-v)      echo "claude-code-notify $VERSION"; exit 0  ;;
+  --help|-h)         print_help;                         exit 0  ;;
 esac
 
 # --- Frontmost-app detection (best-effort; fail-open means "notify anyway") -
@@ -139,11 +144,14 @@ is_skipped_frontmost() {
   [ -z "$SKIP_IF_FRONTMOST" ] && return 1
   case "$OS" in
     Darwin)
-      local asn name
+      local asn raw actual
       asn=$(/usr/bin/lsappinfo front 2>/dev/null) || return 1
       [ -z "$asn" ] && return 1
-      name=$(/usr/bin/lsappinfo info -only name "$asn" 2>/dev/null)
-      [[ "$name" == *"\"$SKIP_IF_FRONTMOST\""* ]]
+      raw=$(/usr/bin/lsappinfo info -only name "$asn" 2>/dev/null)
+      # Parse "LSDisplayName"="Name" — pull the value between quotes on the
+      # line that has the key. Exact-match comparison (not glob substring).
+      actual=$(printf '%s\n' "$raw" | /usr/bin/awk -F'"' '/LSDisplayName/ {print $4; exit}')
+      [ "$actual" = "$SKIP_IF_FRONTMOST" ]
       ;;
     Linux)
       # Requires xdotool on X11. Wayland isn't uniformly introspectable; just
@@ -176,15 +184,9 @@ payload=$(/bin/cat)
 [ -z "$payload" ] && exit 0
 
 extract() {
-  case "$OS" in
-    Darwin)
-      printf '%s' "$payload" | /usr/bin/plutil -extract "$1" raw - 2>/dev/null
-      ;;
-    *)
-      # Linux: require jq
-      printf '%s' "$payload" | jq -r --arg k "$1" '.[$k] // empty' 2>/dev/null
-      ;;
-  esac
+  # jq on both platforms — simpler than branching, handles nulls + nested
+  # values uniformly. jq is a formula dep and documented as a runtime requirement.
+  printf '%s' "$payload" | jq -r --arg k "$1" '.[$k] // empty' 2>/dev/null
 }
 
 event=$(extract hook_event_name)
@@ -252,10 +254,12 @@ if [ "$DRY_RUN" = "1" ]; then
   exit 0
 fi
 
-# Save session state for macOS bundle click-to-focus.
+# Save session state for macOS bundle click-to-focus. Strip newlines/CRs from
+# values so the KEY=VALUE\n format can't be corrupted by a path with embedded
+# newlines (rare, but cheap to defend).
 if [ "$OS" = "Darwin" ]; then
-  cwd=$(extract cwd)
-  session_id=$(extract session_id)
+  cwd=$(extract cwd | tr -d '\n\r')
+  session_id=$(extract session_id | tr -d '\n\r')
   if [ -n "$cwd" ] || [ -n "$session_id" ]; then
     mkdir -p "$STATE_DIR" 2>/dev/null || true
     printf 'cwd=%s\nsession_id=%s\n' "$cwd" "$session_id" \

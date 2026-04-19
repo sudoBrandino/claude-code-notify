@@ -88,13 +88,24 @@ func activatePlain() {
     workspace.openApplication(at: url, configuration: config) { _, _ in }
 }
 
+// Sanitize a string for safe inclusion in an AppleScript double-quoted
+// literal: strip control characters (including newlines that would terminate
+// the statement), then escape backslashes before double-quotes so `\"` stays
+// a single escaped quote rather than an escaped-backslash followed by a raw
+// quote that closes the literal.
+func appleScriptSafe(_ s: String) -> String {
+    return s
+        .components(separatedBy: .controlCharacters).joined()
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+}
+
 var raised = false
 if let cwd = readSessionCwd() {
     let basename = (cwd as NSString).lastPathComponent
     if !basename.isEmpty {
-        // Escape double-quotes for AppleScript string literal safety.
-        let needle = basename.replacingOccurrences(of: "\"", with: "\\\"")
-        raised = raiseWindowMatching(processName: targetApp, needle: needle)
+        raised = raiseWindowMatching(processName: appleScriptSafe(targetApp),
+                                     needle: appleScriptSafe(basename))
     }
 }
 
