@@ -14,7 +14,7 @@
 #   --version          Print version
 #   --help             Print usage
 
-VERSION="0.3.1"
+VERSION="0.3.2"
 
 # --- Configuration ----------------------------------------------------------
 
@@ -95,10 +95,10 @@ install_hooks() {
     return 0
   fi
 
-  local backup tmp
-  backup="${settings}.bak.$(date +%s)"
-  cp "$settings" "$backup"
-  tmp=$(mktemp)
+  local backup tmp mode
+  backup="${settings}.bak.$(date +%s).$$"
+  cp -p "$settings" "$backup"
+  tmp=$(mktemp) || { echo "error: mktemp failed" >&2; return 1; }
   if ! jq --arg cmd "$cmd" '
     .hooks = (.hooks // {})
     | .hooks.Notification = ((.hooks.Notification // []) +
@@ -110,6 +110,13 @@ install_hooks() {
     echo "error: jq filter failed; settings.json unchanged (backup at $backup)" >&2
     return 1
   fi
+  # Preserve settings.json perms across the rename (mktemp creates 0600; mv
+  # would otherwise silently clamp the target to that).
+  case "$OS" in
+    Darwin) mode=$(/usr/bin/stat -f "%Lp" "$settings" 2>/dev/null) ;;
+    *)      mode=$(stat -c "%a" "$settings" 2>/dev/null) ;;
+  esac
+  [ -n "$mode" ] && chmod "$mode" "$tmp"
   mv "$tmp" "$settings"
   echo "wired up: $cmd"
   echo "  in:     $settings"
@@ -126,10 +133,10 @@ uninstall_hooks() {
   local cmd
   cmd=$(resolve_self_path)
 
-  local backup tmp
-  backup="${settings}.bak.$(date +%s)"
-  cp "$settings" "$backup"
-  tmp=$(mktemp)
+  local backup tmp mode
+  backup="${settings}.bak.$(date +%s).$$"
+  cp -p "$settings" "$backup"
+  tmp=$(mktemp) || { echo "error: mktemp failed" >&2; return 1; }
   if ! jq --arg cmd "$cmd" '
     (.hooks.Notification? |= (. // [] |
         map(select((.hooks // []) | map(.command) | index($cmd) | not))))
@@ -142,6 +149,11 @@ uninstall_hooks() {
     echo "error: jq filter failed; settings.json unchanged (backup at $backup)" >&2
     return 1
   fi
+  case "$OS" in
+    Darwin) mode=$(/usr/bin/stat -f "%Lp" "$settings" 2>/dev/null) ;;
+    *)      mode=$(stat -c "%a" "$settings" 2>/dev/null) ;;
+  esac
+  [ -n "$mode" ] && chmod "$mode" "$tmp"
   mv "$tmp" "$settings"
   echo "removed hook entries for: $cmd"
   echo "  backup: $backup"
@@ -278,8 +290,15 @@ if [ "$OS" = "Darwin" ]; then
   session_id=$(extract session_id | tr -d '\n\r')
   if [ -n "$cwd" ] || [ -n "$session_id" ]; then
     mkdir -p "$STATE_DIR" 2>/dev/null || true
-    printf 'cwd=%s\nsession_id=%s\n' "$cwd" "$session_id" \
-      > "$STATE_DIR/last-session" 2>/dev/null || true
+    # noclobber + atomic rename: defends against a symlink pre-placed at the
+    # final path (mv replaces the entry itself) and at the tmp path (set -C
+    # makes > refuse to open an existing file).
+    state_tmp="$STATE_DIR/last-session.tmp.$$"
+    if ( set -C; printf 'cwd=%s\nsession_id=%s\n' "$cwd" "$session_id" > "$state_tmp" ) 2>/dev/null; then
+      mv -f "$state_tmp" "$STATE_DIR/last-session" 2>/dev/null || rm -f "$state_tmp" 2>/dev/null
+    else
+      rm -f "$state_tmp" 2>/dev/null
+    fi
   fi
 fi
 
