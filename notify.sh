@@ -89,15 +89,19 @@ update_hooks() (
   esac
 
   if [ -L "$settings" ]; then
-    local target hops=0
+    local target hops=0 nl=$'\n'
     while [ -L "$settings" ]; do
-      # Read one hop at a time for BSD and GNU readlink. Keep trailing newlines
-      # in the link target by stripping only readlink's newline and the marker.
+      # Read one hop at a time (plain readlink, no GNU flags). A trailing '.'
+      # marker stops $(...) from eating newlines that belong to the link target;
+      # then drop the marker and readlink's own newline. The newline is matched
+      # through a quoted variable because bash 3.2 (macOS /bin/bash) does not
+      # reliably expand $'...' inside ${var%pattern}.
       if [ "$hops" -ge 40 ] || ! target=$(readlink "$settings" && printf '.'); then
         echo "error: cannot resolve settings symlink: $settings" >&2
         return 1
       fi
-      target=${target%$'\n.'}
+      target=${target%.}
+      target=${target%"$nl"}
       case "$target" in
         /*) settings=$target ;;
         *) settings="${settings%/*}/$target" ;;
