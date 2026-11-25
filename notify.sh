@@ -9,7 +9,7 @@
 # optionally xdotool for frontmost detection on X11).
 #
 # Subcommands:
-#   --install-hooks    Wire this binary into ~/.claude/settings.json (needs jq)
+#   --install-hooks    Wire this binary into Claude Code settings.json (needs jq)
 #   --uninstall-hooks  Remove any hook entries pointing at this binary
 #   --version          Print version
 #   --help             Print usage
@@ -62,101 +62,158 @@ With no options, reads a Claude Code hook JSON event on stdin and posts a
 native desktop notification (unless the configured terminal app is frontmost).
 
 Options:
-  --install-hooks      Add this binary to ~/.claude/settings.json for the
+  --install-hooks      Add this binary to Claude Code settings.json for the
                        Notification and Stop events. Idempotent; requires jq.
   --uninstall-hooks    Remove any hook entries that point at this binary.
   --version, -v        Print version.
   --help, -h           Print this help.
 
 Environment:
+  CLAUDE_CONFIG_DIR                Directory for hook settings (default if unset or empty: ~/.claude)
   CLAUDE_NOTIFY_SKIP_IF_FRONTMOST  Terminal app name to stay quiet for (default: Ghostty)
   CLAUDE_NOTIFY_BUNDLE             Optional .app wrapper for a custom icon (macOS)
   CLAUDE_NOTIFY_DRY_RUN=1          Print notification fields instead of posting
 EOF
 }
 
-install_hooks() {
+update_hooks() (
+  local action=$1 filter=$2
   command -v jq >/dev/null 2>&1 || {
-    echo "error: jq is required for --install-hooks (install with: brew install jq)" >&2
+    echo "error: jq is required for --${action}-hooks" >&2
     return 1
   }
-  local settings="$HOME/.claude/settings.json"
-  local cmd
-  cmd=$(resolve_self_path)
-  mkdir -p "$HOME/.claude"
-  [ -f "$settings" ] || printf '{}\n' > "$settings"
+  local settings="${CLAUDE_CONFIG_DIR:-$HOME/.claude}/settings.json"
+  case "$settings" in
+    /*) ;;
+    *) settings="./$settings" ;;
+  esac
 
-  if jq -e --arg cmd "$cmd" '
-        [(.hooks.Notification // [])[].hooks[]?.command,
-         (.hooks.Stop // [])[].hooks[]?.command]
-        | any(. == $cmd)
-      ' "$settings" >/dev/null; then
+  if [ -L "$settings" ]; then
+    local target hops=0
+    while [ -L "$settings" ]; do
+      # Read one hop at a time for BSD and GNU readlink. Keep trailing newlines
+      # in the link target by stripping only readlink's newline and the marker.
+      if [ "$hops" -ge 40 ] || ! target=$(readlink "$settings" && printf '.'); then
+        echo "error: cannot resolve settings symlink: $settings" >&2
+        return 1
+      fi
+      target=${target%$'\n.'}
+      case "$target" in
+        /*) settings=$target ;;
+        *) settings="${settings%/*}/$target" ;;
+      esac
+      hops=$((hops + 1))
+    done
+    if [ ! -f "$settings" ]; then
+      echo "error: settings symlink target is not a regular file: $settings" >&2
+      return 1
+    fi
+  fi
+
+  local source=$settings new=false cmd updated
+  if [ ! -e "$settings" ]; then
+    if [ "$action" = uninstall ]; then
+      echo "nothing to remove: $settings not found"
+      return 0
+    fi
+    source=/dev/null
+    new=true
+  elif [ ! -f "$settings" ]; then
+    echo "error: settings path is not a regular file: $settings" >&2
+    return 1
+  fi
+
+  cmd=$(resolve_self_path) || return 1
+  if ! updated=$(jq -s --arg cmd "$cmd" --argjson new "$new" '
+    if $new then {}
+    elif length == 1 and (.[0] | type == "object") then .[0]
+    else error("expected one settings object") end
+    | '"$filter" "$source"); then
+    echo "error: could not update settings: $settings" >&2
+    return 1
+  fi
+  if [ "$action" = install ] && [ -z "$updated" ]; then
     echo "already wired up: $cmd"
     return 0
   fi
 
-  local backup tmp mode
-  backup="${settings}.bak.$(date +%s).$$"
-  cp -p "$settings" "$backup"
-  tmp=$(mktemp) || { echo "error: mktemp failed" >&2; return 1; }
-  if ! jq --arg cmd "$cmd" '
-    .hooks = (.hooks // {})
-    | .hooks.Notification = ((.hooks.Notification // []) +
-        [{"hooks":[{"type":"command","command":$cmd,"timeout":3}]}])
-    | .hooks.Stop = ((.hooks.Stop // []) +
-        [{"hooks":[{"type":"command","command":$cmd,"timeout":3}]}])
-  ' "$settings" > "$tmp"; then
-    rm -f "$tmp"
-    echo "error: jq filter failed; settings.json unchanged (backup at $backup)" >&2
+  local mode=600 tmp='' pending_backup='' backup=''
+  if [ "$new" = true ]; then
+    mkdir -p "${settings%/*}" || return 1
+  else
+    case "$OS" in
+      Darwin) mode=$(/usr/bin/stat -f '%Lp' "$settings") ;;
+      *)      mode=$(stat -c '%a' "$settings") ;;
+    esac || return 1
+  fi
+
+  trap 'if [ -n "$tmp" ]; then rm -f "$tmp"; fi
+        if [ -n "$pending_backup" ]; then rm -f "$pending_backup"; fi' EXIT
+  trap 'exit 1' HUP INT TERM
+  if ! tmp=$(mktemp "${settings%/*}/.claude-code-notify.XXXXXX"); then
+    echo "error: could not create temporary settings file beside $settings" >&2
     return 1
   fi
-  # Preserve settings.json perms across the rename (mktemp creates 0600; mv
-  # would otherwise silently clamp the target to that).
-  case "$OS" in
-    Darwin) mode=$(/usr/bin/stat -f "%Lp" "$settings" 2>/dev/null) ;;
-    *)      mode=$(stat -c "%a" "$settings" 2>/dev/null) ;;
-  esac
-  [ -n "$mode" ] && chmod "$mode" "$tmp"
-  mv "$tmp" "$settings"
-  echo "wired up: $cmd"
-  echo "  in:     $settings"
-  echo "  backup: $backup"
+  if ! printf '%s\n' "$updated" > "$tmp" || ! chmod "$mode" "$tmp"; then
+    echo "error: could not prepare replacement for $settings" >&2
+    return 1
+  fi
+
+  if [ "$new" = false ]; then
+    if ! pending_backup=$(mktemp "${settings}.bak.XXXXXX") || ! cp -p "$settings" "$pending_backup"; then
+      echo "error: could not back up $settings" >&2
+      return 1
+    fi
+    backup=$pending_backup
+    pending_backup=''
+  fi
+
+  if [[ -L "$settings" || ( "$new" == true && -e "$settings" ) ||
+        ( "$new" == false && ! -f "$settings" ) ]] || ! mv -f "$tmp" "$settings"; then
+    echo "error: could not replace $settings" >&2
+    if [ -n "$backup" ]; then echo "  backup: $backup" >&2; fi
+    return 1
+  fi
+  tmp=''
+
+  if [ "$action" = install ]; then
+    echo "wired up: $cmd"
+    echo "  in:     $settings"
+  else
+    echo "removed hook entries for: $cmd"
+  fi
+  if [ -n "$backup" ]; then echo "  backup: $backup"; fi
+)
+
+install_hooks() {
+  # shellcheck disable=SC2016 # jq variables are bound by --arg.
+  update_hooks install '
+    def add_hook:
+      (. // [])
+      | if any(.[].hooks[]?; .command == $cmd) then .
+        else . + [{"hooks":[{"type":"command","command":$cmd,"timeout":3}]}] end;
+    . as $before
+    | .hooks = (.hooks // {})
+    | .hooks.Notification |= add_hook
+    | .hooks.Stop |= add_hook
+    | select(. != $before)
+  '
 }
 
 uninstall_hooks() {
-  command -v jq >/dev/null 2>&1 || {
-    echo "error: jq is required for --uninstall-hooks" >&2
-    return 1
-  }
-  local settings="$HOME/.claude/settings.json"
-  [ -f "$settings" ] || { echo "nothing to remove: $settings not found"; return 0; }
-  local cmd
-  cmd=$(resolve_self_path)
-
-  local backup tmp mode
-  backup="${settings}.bak.$(date +%s).$$"
-  cp -p "$settings" "$backup"
-  tmp=$(mktemp) || { echo "error: mktemp failed" >&2; return 1; }
-  if ! jq --arg cmd "$cmd" '
-    (.hooks.Notification? |= (. // [] |
-        map(select((.hooks // []) | map(.command) | index($cmd) | not))))
-    | (.hooks.Stop? |= (. // [] |
-        map(select((.hooks // []) | map(.command) | index($cmd) | not))))
-    | if (.hooks.Notification // [] | length) == 0 then del(.hooks.Notification) else . end
-    | if (.hooks.Stop // [] | length) == 0 then del(.hooks.Stop) else . end
-  ' "$settings" > "$tmp"; then
-    rm -f "$tmp"
-    echo "error: jq filter failed; settings.json unchanged (backup at $backup)" >&2
-    return 1
-  fi
-  case "$OS" in
-    Darwin) mode=$(/usr/bin/stat -f "%Lp" "$settings" 2>/dev/null) ;;
-    *)      mode=$(stat -c "%a" "$settings" 2>/dev/null) ;;
-  esac
-  [ -n "$mode" ] && chmod "$mode" "$tmp"
-  mv "$tmp" "$settings"
-  echo "removed hook entries for: $cmd"
-  echo "  backup: $backup"
+  # shellcheck disable=SC2016 # jq variables are bound by --arg.
+  update_hooks uninstall '
+    def remove_hook:
+      map(if any(.hooks[]?; .command == $cmd) then
+        .hooks |= map(select(.command != $cmd))
+        | select(.hooks != [])
+      else . end);
+    reduce ("Notification", "Stop") as $event (.;
+      if .hooks[$event] != null then
+        .hooks[$event] |= remove_hook
+        | if .hooks[$event] == [] then del(.hooks[$event]) else . end
+      else . end)
+  '
 }
 
 case "${1:-}" in
@@ -272,7 +329,7 @@ case "$event" in
     ;;
 esac
 
-message=$(printf '%s' "$message" | tr -s '[:space:]' ' ' | cut -c1-140)
+message=$(printf '%s' "$message" | tr -s '[:space:]' ' ' | jq -Rrs '.[0:140]')
 
 # --- Emit --------------------------------------------------------------------
 

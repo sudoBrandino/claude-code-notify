@@ -30,7 +30,7 @@ brew install claude-code-notify
 claude-code-notify --install-hooks
 ```
 
-That's it. The last step adds the binary to `~/.claude/settings.json` for the `Notification` and `Stop` events. It's idempotent and preserves any existing hooks from other tools.
+That's it. The last step adds the binary to `settings.json` in `$CLAUDE_CONFIG_DIR` (default `~/.claude`) for the `Notification` and `Stop` events. It's idempotent and preserves any existing hooks from other tools.
 
 > **Linux without Homebrew:** clone the repo, copy `notify.sh` somewhere on `$PATH`, install `jq` + `libnotify-bin`, then run `notify.sh --install-hooks`.
 
@@ -38,7 +38,7 @@ That's it. The last step adds the binary to `~/.claude/settings.json` for the `N
 
 | Command | What it does |
 |---|---|
-| `claude-code-notify --install-hooks` | Adds the hook to `~/.claude/settings.json` (via `jq`). Idempotent. |
+| `claude-code-notify --install-hooks` | Adds the hook to `settings.json` in `$CLAUDE_CONFIG_DIR` (default `~/.claude`) via `jq`. Idempotent; follows a symlinked `settings.json` and keeps the link. |
 | `claude-code-notify --uninstall-hooks` | Removes any hook entries pointing at this binary. |
 | `claude-code-notify --help` | Print usage. |
 | `claude-code-notify` (no args, stdin JSON) | Normal hook invocation — posts the notification. |
@@ -49,6 +49,7 @@ Every knob is an environment variable. Set in your shell profile, or inline in t
 
 | Variable | Default | Purpose |
 |---|---|---|
+| `CLAUDE_CONFIG_DIR` | `$HOME/.claude` | Directory holding `settings.json` for `--install-hooks` / `--uninstall-hooks`. Empty = unset. |
 | `CLAUDE_NOTIFY_SKIP_IF_FRONTMOST` | `Ghostty` | App name that suppresses notifications when frontmost. Empty string = always notify. |
 | `CLAUDE_NOTIFY_BUNDLE` | `$HOME/.claude/assets/Claude.app` | Path to the optional wrapper `.app` bundle. Falls back to bare `osascript` if missing. |
 | `CLAUDE_NOTIFY_DRY_RUN` | `0` | Print notification fields instead of posting. Used by tests. |
